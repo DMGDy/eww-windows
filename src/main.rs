@@ -1,33 +1,82 @@
 use std::{
-    io::{Write,BufReader,Read},
+    io::{Write,Read,BufRead,BufReader},
     env,
     os::unix::net::UnixStream,
     iter::Peekable,
     str::SplitWhitespace,
+    collections::{BTreeMap,HashSet},
+    sync::OnceLock
 };
 
+static EVENTS: OnceLock<HashSet<&'static str>> = OnceLock::new();
+//
+                // determine events occur:
+                // workspace 
+                // activewindow
+                // openwindow
+                // closewindow
+                // movewindow
+
+fn get_events() -> &'static HashSet<&'static str> {
+    EVENTS.get_or_init(|| {
+        [
+            "workspace",
+            "activewindow",
+            "openwindow",
+            "closewindow",
+            "movewindow",
+        ].into_iter().collect()
+    })
+
+}
+
+fn is_valid_event(event: &str) -> bool {
+    get_events().contains(event)
+}
+
+/* for this program:
+ *  tag: the index of the workspace
+ *  workspace: the actual thing containing the windows
+ */
+
+/* Window: metadata assoicated to an open window on hyprland
+ *
+ * name: the desktop name of the program
+ * info: the secondary title or "information" of the window
+ * pid: pid associated with the window open
+ * tag: the workspace index th window exists on
+ * order: 0 meaning active, the order of when it was used
+ */
 struct Window {
-    title: String,
+    name: String,
     info: String,
     address: String,
-    tag: u8,
-    order: u8 
+    class: String,
+    tag: usize,
+    order: usize 
 }
 
-struct Tag {
-    tag: u8,
+// sorted by order (revent activity)
+type AllWindows = Vec<Window>;
+
+ /* windows: vector of windows in order of activity
+  * order: the order of this workspace in activity
+ */
+struct Workspace {
     windows: Vec<Window>,
+    tag: usize,
+    order:  usize,
+    active: bool 
 }
 
-const WORKSPACE_COUNT: usize = 9;
+type Workspaces = BTreeMap<usize,Workspace>;
 
-fn peek_until_newline<'a>(iter: &mut Peekable<SplitWhitespace<'a>>) -> String {
+fn peek_until_newline<'a>(iter: &mut Peekable<SplitWhitespace<'a>>,next_line: &str) -> String {
     let mut result = Vec::new();
     while let Some(&word) = iter.peek() {
-        if word.contains("initialClass:") {
-            // If the word contains a newline, split it
-            let parts: Vec<&str> = word.split("initialClass:").collect();
-            result.push(parts[0]); // Add the part before the newline
+        if word.contains(next_line) {
+            let parts: Vec<&str> = word.split(next_line).collect();
+            result.push(parts[0]); 
             break;
         }
         result.push(word);
@@ -36,7 +85,7 @@ fn peek_until_newline<'a>(iter: &mut Peekable<SplitWhitespace<'a>>) -> String {
     result.join(" ")
 }
 
-fn get_windows() -> Vec<Window> {
+fn get_windows() -> Vec<Window>{
     let mut sock = UnixStream::connect(
         format!("{}/hypr/{}/.socket.sock",
             env::var("XDG_RUNTIME_DIR").unwrap(),
@@ -51,49 +100,180 @@ fn get_windows() -> Vec<Window> {
     let mut iter = buff.split_whitespace().peekable();
 
     let mut done = false;
-    let mut all_windows: Vec<Window> = Vec::new();
-    let mut title = String::new();
-    let mut info = String::new();
-    let mut address = String::new();
-    let mut tag: u8 = u8::default();
-    let mut order: u8 = u8::default();
+    let mut all_windows: Vec<Window>  = Vec::new();
+    let mut name = String::with_capacity(32);
+    let mut info = String::with_capacity(64);
+    let mut class = String::with_capacity(32);
+    let mut address = String::with_capacity(8);
+    let mut tag = usize::default();
+    let mut order = usize::default();
 
     while let Some(key) = iter.next() {
         match key {
-            "Window" => {
-                address = iter.peek().unwrap().to_string();
-            },
             "workspace:" => {
                 tag = iter.peek().unwrap().parse().unwrap();
             },
             "title:" => {
-                info = peek_until_newline(&mut iter);
-                println!("{info}");
+                info = peek_until_newline(&mut iter,"initialClass:").trim_end().to_string();
             },
             "initialTitle:" => {
-                title = iter.peek().unwrap().to_string();
+                name = peek_until_newline(&mut iter,"pid:").trim_end().to_string();
             }
             "focusHistoryID:" => {
                 order = iter.peek().unwrap().parse().unwrap();
                 done = true;
             }
+            "Window" => {
+                address = iter.peek().unwrap().to_string();
+            },
+            "class:" => {
+                class = peek_until_newline(&mut iter, "title:").trim_end().to_string();
+            }
+
             _ => {}
         };
 
         if done == true{
             all_windows.push( Window{
-                 title: title.clone(),
+                 name: name.clone(),
                  info: info.clone(),
                  address: address.clone(),
+                 class: class.clone(),
                  tag,
                  order
             });
             done = false;
         };
     }
+    all_windows.sort_by(|win1,win2| win1.order.cmp(&win2.order));
     all_windows
 }
 
+fn assign_tags_to_win(all_wins: AllWindows) -> Workspaces {
+    let mut workspaces: Workspaces = BTreeMap::new();
+
+    let mut order:usize = 0;
+    for window in all_wins{
+        workspaces.entry(window.tag)
+            .or_insert( (|| { 
+                let w = Workspace {
+                    windows: Vec::new(),
+                    active: window.order == 0,
+                    tag: window.tag,
+                    order,
+                };
+                order += 1;
+                w
+            })()).windows.push(window);
+    }
+   workspaces 
+}
+
+fn gen_eww_widget(workspace: &Workspaces) {
+    let mut sorted_workspaces: Vec<_> = workspace
+        .into_iter()
+        .collect();
+    // sort by recently used
+    sorted_workspaces.sort_by(|w1,w2| w1.1.order.cmp(&w2.1.order));
+
+    print!("(box :class \"window-container\" \
+                 :space-evenly false");
+    for (_,workspace) in sorted_workspaces {
+        print!("(box ");
+
+        if workspace.active {
+            print!(":class \"active-workspace\" ")
+        } else {
+            print!(":class \"workspace\" ");
+        }
+        print!(":space-evenly false ");
+        print!("(label :class \"tag-id\" :text \"{}\" )",workspace.tag);
+        for window in &workspace.windows {
+            print!("(button :class \"window-tab\"");
+                print!(":onclick \
+                    \"$HOME/.config/eww/eww-windows/target/release/eww-windows {}\"\
+                    ",window.address);
+                print!("(box ");
+                if window.order == 0 {
+                    print!(":class \"active-window\" ");
+                } else {
+                    print!(":class \"inactive-window\" ");
+                }
+                print!(":tooltip \"{}\" ",window.info);
+                print!(":space-evenly false \
+                (box :class \"win-icon\" \
+                :style \
+                \"background-image:\
+                url('icons/{}.svg');\") \
+                (box :class \"win-title\" \
+                (label :limit-width 16 \
+                :text \"{}\" ))))",window.class,window.name);
+        }
+        print!(")")
+    }
+    println!(")");
+}
+
+/* read hyprland socket2 to see if there is 
+ * activity on workspace or winndow change
+*/ 
+fn is_activity()  -> bool {
+    let sock = UnixStream::connect(
+        format!("{}/hypr/{}/.socket2.sock",
+            env::var("XDG_RUNTIME_DIR").unwrap(),
+            env::var("HYPRLAND_INSTANCE_SIGNATURE").unwrap()
+        )).unwrap();
+
+    let mut buffer = String::new();
+    // for some reason reading socket2 must be buffered
+    let mut reader = BufReader::new(sock);
+    loop {
+        match reader.read_line(&mut buffer) {
+            Ok(_) =>{
+                for line in buffer.lines() {
+                    
+                    let event = line 
+                        .split(">>")
+                        .next()
+                        .unwrap();
+
+                    if is_valid_event(event) {
+                        return true
+                    }
+                }
+            },
+            Err(_) => {}
+        }
+    }
+
+}
+
+fn swich_window(adr: String) {
+    let mut sock = UnixStream::connect(
+        format!("{}/hypr/{}/.socket.sock",
+            env::var("XDG_RUNTIME_DIR").unwrap(),
+            env::var("HYPRLAND_INSTANCE_SIGNATURE").unwrap()
+        )).unwrap();
+
+    
+    let _ = sock.write_all(format!(
+            "dispatch focuswindow address:0x{adr}"
+    ).as_bytes());
+
+}
+
 fn main() {
-    let all_windows = get_windows();
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() > 1 {
+        swich_window(args[1].clone());
+        std::process::exit(0)
+    }
+    loop {
+        if is_activity() {
+            let all_windows = get_windows();
+            let workspaces = assign_tags_to_win(all_windows);
+            gen_eww_widget(&workspaces);
+        }
+    }
+
 }
