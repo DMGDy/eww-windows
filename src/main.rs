@@ -118,6 +118,9 @@ fn get_windows() -> Vec<Window>{
             },
             "initialTitle:" => {
                 name = peek_until_newline(&mut iter,"pid:").trim_end().to_string();
+                if name.contains("Chromium") {
+                    name = "Chromium".to_string();
+                }
             }
             "focusHistoryID:" => {
                 order = iter.peek().unwrap().parse().unwrap();
@@ -191,7 +194,7 @@ fn gen_eww_widget(workspace: &Workspaces) {
         for window in &workspace.windows {
             print!("(button :class \"window-tab\"");
                 print!(":onclick \
-                    \"$HOME/.config/eww/eww-windows/target/release/eww-windows {}\"\
+                    \"$HOME/.config/eww/eww-windows/target/release/eww-windows {}\" \
                     ",window.address);
                 print!("(box ");
                 if window.order == 0 {
@@ -207,7 +210,8 @@ fn gen_eww_widget(workspace: &Workspaces) {
                 url('icons/{}.svg');\") \
                 (box :class \"win-title\" \
                 (label :limit-width 16 \
-                :text \"{}\" ))))",window.class,window.name);
+                :text \"{}\" ))",window.class,window.name);
+                print!("))")
         }
         print!(")")
     }
