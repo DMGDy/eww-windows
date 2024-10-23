@@ -5,7 +5,7 @@ Meant for the Hyprland compositor, this program generates an [Eww](https://githu
 widget displaying open windows, grouped by workspace, and in order of recently used. This utilizes
 Eww's powerful `literal` widget which allows dynamic generation of Eww code to make widgets.
 
-<img src="./.git/example.png">
+<img src="./.github/example.png">
 
 This is primarily used apart of my [eww-bar](https://github.com/DMGDy/eww-bar)
 setup that utilizes other compiled programs to provide
