@@ -118,8 +118,12 @@ fn get_windows() -> Vec<Window>{
             },
             "initialTitle:" => {
                 name = peek_until_newline(&mut iter,"pid:").trim_end().to_string();
-                if name.contains("Chromium") {
-                    name = "Chromium".to_string();
+                // special cases for ugly initialTitles
+                name = match name {
+                    title if title.contains("Chromium") =>  "Chromium".to_string(),
+                    title if title.contains("OBS") =>  "OBS Studio".to_string(),
+                    _ => name 
+                        
                 }
             }
             "focusHistoryID:" => {
