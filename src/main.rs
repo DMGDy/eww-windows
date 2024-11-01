@@ -115,6 +115,11 @@ fn get_windows() -> Vec<Window>{
             },
             "title:" => {
                 info = peek_until_newline(&mut iter,"initialClass:").trim_end().to_string();
+                info = match info {
+                    init_class if init_class.contains(".pdf") =>
+                        init_class.split("/").last().expect("PDF Document").to_string(),
+                    _ => info
+                }
             },
             "initialTitle:" => {
                 name = peek_until_newline(&mut iter,"pid:").trim_end().to_string();
@@ -122,6 +127,10 @@ fn get_windows() -> Vec<Window>{
                 name = match name {
                     title if title.contains("Chromium") =>  "Chromium".to_string(),
                     title if title.contains("OBS") =>  "OBS Studio".to_string(),
+                    title if title.contains(".pdf") => 
+                        title.split("/").last().expect("Document").to_string(),
+                    title if title.contains("WhatsApp") => "WhatsApp".to_string(),
+                    
                     _ => name 
                         
                 }
