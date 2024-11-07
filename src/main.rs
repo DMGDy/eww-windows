@@ -4,35 +4,16 @@ use std::{
     os::unix::net::UnixStream,
     iter::Peekable,
     str::SplitWhitespace,
-    collections::{BTreeMap,HashSet},
-    sync::OnceLock
+    collections::BTreeMap,
 };
 
-static EVENTS: OnceLock<HashSet<&'static str>> = OnceLock::new();
-//
-                // determine events occur:
-                // workspace 
-                // activewindow
-                // openwindow
-                // closewindow
-                // movewindow
-
-fn get_events() -> &'static HashSet<&'static str> {
-    EVENTS.get_or_init(|| {
-        [
+const EVENTS: [&str;5] = [
             "workspace",
             "activewindow",
             "openwindow",
             "closewindow",
             "movewindow",
-        ].into_iter().collect()
-    })
-
-}
-
-fn is_valid_event(event: &str) -> bool {
-    get_events().contains(event)
-}
+];
 
 /* for this program:
  *  tag: the index of the workspace
@@ -254,7 +235,7 @@ fn is_activity()  -> bool {
                         .next()
                         .unwrap();
 
-                    if is_valid_event(event) {
+                    if EVENTS.contains(&event) {
                         return true
                     }
                 }
